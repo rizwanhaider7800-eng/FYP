@@ -5,6 +5,9 @@ import { useCartStore } from '../../store/cartStore';
 import { useAuthStore } from '../../store/authStore';
 import api from '../../utils/api';
 import toast from 'react-hot-toast';
+import { loadStripe } from '@stripe/stripe-js';
+
+const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY || 'pk_test_51SV4zDFsp47mXuqxqT6dGzxRLjCnuYFyLJnqBlSeEUT4D4ggH4kzkRCKIBicewRKjKFifWKmgLA2OyaQkAeCPoIj00EMdlrpYa');
 
 function Checkout() {
   const navigate = useNavigate();
@@ -37,30 +40,71 @@ function Checkout() {
     setLoading(true);
 
     try {
-      const orderData = {
-        items: items.map(item => ({
-          product: item.product._id,
-          quantity: item.quantity
-        })),
-        shippingAddress: {
-          street: formData.street,
-          city: formData.city,
-          state: formData.state,
-          zipCode: formData.zipCode,
-          country: formData.country,
-          phone: formData.phone
-        },
-        paymentMethod: formData.paymentMethod,
-        couponCode: formData.couponCode || undefined
-      };
+      // If payment method is card, create Stripe checkout session
+      if (formData.paymentMethod === 'card') {
+        const checkoutData = {
+          items: items.map(item => ({
+            product: item.product._id,
+            quantity: item.quantity
+          })),
+          shippingAddress: {
+            street: formData.street,
+            city: formData.city,
+            state: formData.state,
+            zipCode: formData.zipCode,
+            country: formData.country,
+            phone: formData.phone
+          }
+        };
 
-      const response = await api.post('/orders', orderData);
-      
-      clearCart();
-      toast.success('Order placed successfully!');
-      navigate(`/orders/${response.data.data._id}`);
+        const response = await api.post('/orders/create-checkout-session', checkoutData);
+        
+        // Redirect to Stripe checkout page
+        if (response.data.url) {
+          window.location.href = response.data.url;
+        } else {
+          toast.error('Failed to create checkout session');
+        }
+      } else {
+        // For COD and other payment methods
+        const orderData = {
+          items: items.map(item => ({
+            product: item.product._id,
+            quantity: item.quantity
+          })),
+          shippingAddress: {
+            street: formData.street,
+            city: formData.city,
+            state: formData.state,
+            zipCode: formData.zipCode,
+            country: formData.country,
+            phone: formData.phone
+          },
+          paymentMethod: formData.paymentMethod,
+          couponCode: formData.couponCode || undefined
+        };
+
+        const response = await api.post('/orders', orderData);
+        
+        clearCart();
+        toast.success('Order placed successfully!');
+        navigate(`/orders/${response.data.data._id}`);
+      }
     } catch (error) {
-      toast.error(error.response?.data?.message || 'Failed to place order');
+      console.error('Order placement error:', error);
+      
+      // Handle different types of errors
+      if (error.response) {
+        // Server responded with an error status
+        const message = error.response.data?.message || error.response.data?.error || 'Server error occurred';
+        toast.error(message);
+      } else if (error.request) {
+        // Request was made but no response received
+        toast.error('Unable to connect to server. Please check your internet connection.');
+      } else {
+        // Something else happened
+        toast.error(error.message || 'An unexpected error occurred');
+      }
     } finally {
       setLoading(false);
     }

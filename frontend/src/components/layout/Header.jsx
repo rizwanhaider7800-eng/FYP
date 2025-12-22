@@ -1,17 +1,38 @@
 import { Link, useNavigate } from 'react-router-dom';
 import { ShoppingCart, User, Bell, Menu, LogOut, Package, LayoutDashboard } from 'lucide-react';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuthStore } from '../../store/authStore';
 import { useCartStore } from '../../store/cartStore';
-import homeIcon from '../../assets/home.png'
+import homeIcon from '../../assets/home.png';
+import api from '../../utils/api';
 
 function Header() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
   const { user, logout } = useAuthStore();
   const { getItemCount } = useCartStore();
   const navigate = useNavigate();
   const cartCount = getItemCount();
+
+  useEffect(() => {
+    if (user) {
+      fetchUnreadNotifications();
+      // Poll for new notifications every 30 seconds
+      const interval = setInterval(fetchUnreadNotifications, 30000);
+      return () => clearInterval(interval);
+    }
+  }, [user]);
+
+  const fetchUnreadNotifications = async () => {
+    try {
+      const response = await api.get('/notifications?read=false');
+      setUnreadCount(response.data.count || 0);
+    } catch (error) {
+      // Silently fail - notifications are not critical
+      console.error('Failed to fetch notifications:', error);
+    }
+  };
 
   const handleLogout = () => {
     logout();
@@ -63,9 +84,11 @@ function Header() {
               <>
                 <Link to="/notifications" className="text-gray-700 hover:text-primary-600 relative">
                   <Bell className="h-6 w-6" />
-                  <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full h-4 w-4 flex items-center justify-center">
-                    3
-                  </span>
+                  {unreadCount > 0 && (
+                    <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full h-4 w-4 flex items-center justify-center">
+                      {unreadCount > 9 ? '9+' : unreadCount}
+                    </span>
+                  )}
                 </Link>
                 
                 <Link to="/cart" className="text-gray-700 hover:text-primary-600 relative">

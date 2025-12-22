@@ -6,6 +6,15 @@ import PDFDocument from 'pdfkit';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import Stripe from 'stripe';
+
+let stripe;
+const initStripe = () => {
+  if (!stripe && process.env.STRIPE_SECRET_KEY) {
+    stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+  }
+  return stripe;
+};
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -339,4 +348,264 @@ export const generateInvoice = async (req, res, next) => {
   } catch (error) {
     next(error);
   }
+};
+
+export const createCheckoutSession = async (req, res, next) => {
+  try {
+    const { items, shippingAddress } = req.body;
+
+    if (!req.user || !req.user.id) {
+      return res.status(401).json({ success: false, message: "User not authenticated" });
+    }
+
+    if (!items || items.length === 0) {
+      return res.status(400).json({ success: false, message: 'No order items provided' });
+    }
+
+    // Calculate order details
+    let subtotal = 0;
+    const orderItems = [];
+    const lineItems = [];
+
+    for (const item of items) {
+      const product = await Product.findById(item.product).lean();
+      if (!product) {
+        return res.status(404).json({ success: false, message: `Product not found: ${item.product}` });
+      }
+
+      if (product.inventory.stock < item.quantity) {
+        return res.status(400).json({
+          success: false,
+          message: `Insufficient stock for ${product.name}. Available: ${product.inventory.stock}`
+        });
+      }
+
+      let price = product.pricing.retailPrice;
+      if (item.quantity >= product.pricing.minWholesaleQuantity) {
+        price = product.pricing.wholesalePrice;
+      }
+
+      // Store only plain data for metadata
+      orderItems.push({
+        product: product._id.toString(),
+        quantity: parseInt(item.quantity),
+        price: parseFloat(price)
+      });
+
+      subtotal += price * item.quantity;
+
+      // Create Stripe line items - Skip images as they're local paths, not valid URLs
+      lineItems.push({
+        price_data: {
+          currency: 'pkr',
+          product_data: {
+            name: String(product.name || 'Product'),
+            description: String(product.description || '').substring(0, 100)
+          },
+          unit_amount: Math.round(price * 100)
+        },
+        quantity: item.quantity
+      });
+    }
+
+    const tax = subtotal * 0.05;
+    const shippingCost = subtotal > 10000 ? 0 : 500;
+
+    // Add tax as line item
+    if (tax > 0) {
+      lineItems.push({
+        price_data: {
+          currency: 'pkr',
+          product_data: {
+            name: 'Tax (5%)'
+          },
+          unit_amount: Math.round(tax * 100)
+        },
+        quantity: 1
+      });
+    }
+
+    // Add shipping as line item
+    if (shippingCost > 0) {
+      lineItems.push({
+        price_data: {
+          currency: 'pkr',
+          product_data: {
+            name: 'Shipping Cost'
+          },
+          unit_amount: Math.round(shippingCost * 100)
+        },
+        quantity: 1
+      });
+    }
+
+    // Sanitize shipping address to plain object
+    const sanitizedAddress = {
+      street: String(shippingAddress.street || ''),
+      city: String(shippingAddress.city || ''),
+      state: String(shippingAddress.state || ''),
+      zipCode: String(shippingAddress.zipCode || ''),
+      country: String(shippingAddress.country || 'Pakistan'),
+      phone: String(shippingAddress.phone || '')
+    };
+
+    // Get user email safely
+    const userEmail = String(req.user.email || '');
+    const userId = String(req.user.id || req.user._id || '');
+
+    // Create Stripe checkout session
+    const stripeInstance = initStripe();
+    const session = await stripeInstance.checkout.sessions.create({
+      payment_method_types: ['card'],
+      line_items: lineItems,
+      mode: 'payment',
+      success_url: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/orders?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/checkout`,
+      customer_email: userEmail,
+      metadata: {
+        userId: userId,
+        orderItems: JSON.stringify(orderItems),
+        shippingAddress: JSON.stringify(sanitizedAddress),
+        subtotal: String(subtotal),
+        tax: String(tax),
+        shippingCost: String(shippingCost)
+      }
+    });
+
+    res.status(200).json({
+      success: true,
+      sessionId: session.id,
+      url: session.url
+    });
+  } catch (error) {
+    console.error('Stripe checkout error:', error);
+    next(error);
+  }
+};
+
+export const verifyPayment = async (req, res, next) => {
+  try {
+    const { sessionId } = req.body;
+
+    if (!sessionId) {
+      return res.status(400).json({ success: false, message: 'Session ID is required' });
+    }
+
+    // Retrieve the session from Stripe
+    const stripeInstance = initStripe();
+    const session = await stripeInstance.checkout.sessions.retrieve(sessionId);
+
+    if (session.payment_status !== 'paid') {
+      return res.status(400).json({
+        success: false,
+        message: 'Payment not completed'
+      });
+    }
+
+    // Check if order already exists for this session
+    const existingOrder = await Order.findOne({ 'paymentDetails.transactionId': sessionId });
+    if (existingOrder) {
+      return res.status(200).json({
+        success: true,
+        data: existingOrder,
+        message: 'Order already created'
+      });
+    }
+
+    // Create order from session metadata
+    const metadata = session.metadata;
+    const orderItems = JSON.parse(metadata.orderItems);
+    const shippingAddress = JSON.parse(metadata.shippingAddress);
+
+    // Add priceType to each item based on quantity and fetch product details
+    const enrichedItems = [];
+    for (const item of orderItems) {
+      const product = await Product.findById(item.product);
+      if (!product) {
+        continue; // Skip if product not found
+      }
+
+      const priceType = item.quantity >= product.pricing.minWholesaleQuantity ? 'wholesale' : 'retail';
+      
+      enrichedItems.push({
+        product: item.product,
+        quantity: parseInt(item.quantity),
+        price: parseFloat(item.price),
+        priceType: priceType
+      });
+
+      // Update product stock
+      product.inventory.stock -= item.quantity;
+      await product.save();
+    }
+
+    const order = new Order({
+      customer: metadata.userId,
+      items: enrichedItems,
+      pricing: {
+        subtotal: parseFloat(metadata.subtotal),
+        discount: 0,
+        tax: parseFloat(metadata.tax),
+        shippingCost: parseFloat(metadata.shippingCost),
+        total: session.amount_total / 100
+      },
+      shippingAddress,
+      paymentDetails: {
+        method: 'card',
+        status: 'paid',
+        transactionId: sessionId,
+        paidAt: new Date()
+      }
+    });
+
+    await order.save();
+    await order.populate('items.product customer');
+
+    // Create notification
+    await Notification.create({
+      user: metadata.userId,
+      type: 'order',
+      title: 'Order Confirmed',
+      message: `Your order #${order.orderNumber} has been confirmed and payment received`,
+      data: { orderId: order._id },
+      link: `/orders/${order._id}`
+    });
+
+    res.status(201).json({
+      success: true,
+      data: order
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const handleStripeWebhook = async (req, res) => {
+  const sig = req.headers['stripe-signature'];
+  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+
+  let event;
+
+  try {
+    const stripeInstance = initStripe();
+    event = stripeInstance.webhooks.constructEvent(req.body, sig, webhookSecret);
+  } catch (err) {
+    console.log(`Webhook signature verification failed.`, err.message);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+
+  // Handle the event
+  if (event.type === 'checkout.session.completed') {
+    const session = event.data.object;
+    
+    // Find and update order
+    const order = await Order.findOne({ 'paymentDetails.transactionId': session.id });
+    if (order && order.paymentDetails.status !== 'paid') {
+      order.paymentDetails.status = 'paid';
+      order.paymentDetails.paidAt = new Date();
+      await order.save();
+    }
+  }
+
+  res.json({ received: true });
 };
