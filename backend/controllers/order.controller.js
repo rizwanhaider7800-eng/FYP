@@ -96,6 +96,42 @@ export const createOrder = async (req, res, next) => {
 
     await order.populate('items.product customer');
 
+    // Create notification for the customer
+    await Notification.create({
+      user: req.user.id,
+      type: 'order',
+      title: 'Order Placed Successfully',
+      message: `Your order #${order._id.toString().slice(-6)} has been placed successfully. Total amount: Rs ${total.toFixed(2)}`,
+      data: {
+        orderId: order._id,
+        total: total
+      },
+      link: `/orders/${order._id}`
+    });
+
+    // Create notification for suppliers whose products are in the order
+    const supplierIds = new Set();
+    for (const item of orderItems) {
+      const product = await Product.findById(item.product).populate('supplier');
+      if (product && product.supplier) {
+        supplierIds.add(product.supplier._id.toString());
+      }
+    }
+
+    // Send notification to each unique supplier
+    for (const supplierId of supplierIds) {
+      await Notification.create({
+        user: supplierId,
+        type: 'order',
+        title: 'New Order Received',
+        message: `You have received a new order #${order._id.toString().slice(-6)}`,
+        data: {
+          orderId: order._id
+        },
+        link: `/seller/orders`
+      });
+    }
+
     res.status(201).json({
       success: true,
       data: order

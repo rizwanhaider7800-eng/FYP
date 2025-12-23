@@ -6,6 +6,7 @@ import { useAuthStore } from '../../store/authStore';
 import api from '../../utils/api';
 import toast from 'react-hot-toast';
 import { loadStripe } from '@stripe/stripe-js';
+import { useQueryClient } from 'react-query';
 
 const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY || 'pk_test_51SV4zDFsp47mXuqxqT6dGzxRLjCnuYFyLJnqBlSeEUT4D4ggH4kzkRCKIBicewRKjKFifWKmgLA2OyaQkAeCPoIj00EMdlrpYa');
 
@@ -14,6 +15,7 @@ function Checkout() {
   const { items, getTotal, clearCart } = useCartStore();
   const { user } = useAuthStore();
   const [loading, setLoading] = useState(false);
+  const queryClient = useQueryClient();
 
   const [formData, setFormData] = useState({
     street: user?.address?.street || '',
@@ -85,6 +87,9 @@ function Checkout() {
         };
 
         const response = await api.post('/orders', orderData);
+        
+        // Invalidate notifications to update badge instantly
+        queryClient.invalidateQueries('notifications');
         
         clearCart();
         toast.success('Order placed successfully!');

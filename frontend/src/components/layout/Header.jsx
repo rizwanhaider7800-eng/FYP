@@ -1,38 +1,34 @@
 import { Link, useNavigate } from 'react-router-dom';
 import { ShoppingCart, User, Bell, Menu, LogOut, Package, LayoutDashboard } from 'lucide-react';
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useAuthStore } from '../../store/authStore';
 import { useCartStore } from '../../store/cartStore';
 import homeIcon from '../../assets/home.png';
-import api from '../../utils/api';
+import { useQuery } from 'react-query';
 
 function Header() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
-  const [unreadCount, setUnreadCount] = useState(0);
   const { user, logout } = useAuthStore();
   const { getItemCount } = useCartStore();
   const navigate = useNavigate();
   const cartCount = getItemCount();
 
-  useEffect(() => {
-    if (user) {
-      fetchUnreadNotifications();
-      // Poll for new notifications every 30 seconds
-      const interval = setInterval(fetchUnreadNotifications, 30000);
-      return () => clearInterval(interval);
+  // Use react-query to fetch notifications with auto-refetch
+  const { data: notificationData } = useQuery(
+    'notifications',
+    async () => {
+      const response = await (await import('../../utils/api')).default.get('/notifications');
+      return response.data;
+    },
+    {
+      enabled: !!user,
+      refetchInterval: 30000, // Refetch every 30 seconds
+      staleTime: 10000 // Consider data stale after 10 seconds
     }
-  }, [user]);
+  );
 
-  const fetchUnreadNotifications = async () => {
-    try {
-      const response = await api.get('/notifications?read=false');
-      setUnreadCount(response.data.count || 0);
-    } catch (error) {
-      // Silently fail - notifications are not critical
-      console.error('Failed to fetch notifications:', error);
-    }
-  };
+  const unreadCount = notificationData?.unreadCount || 0;
 
   const handleLogout = () => {
     logout();
