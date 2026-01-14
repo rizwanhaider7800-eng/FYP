@@ -13,7 +13,7 @@ function ProductCard({ product }) {
   };
 
   const imageUrl = product.images?.[0]?.url 
-    ? `http://localhost:5000${product.images[0].url}` 
+    ? product.images[0].url
     : 'https://via.placeholder.com/300x300?text=No+Image';
 
   // Calculate discount percentage if applicable

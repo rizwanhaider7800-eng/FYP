@@ -13,8 +13,14 @@ export default defineConfig({
     port: 3000,
     proxy: {
       '/api': {
-        target: 'http://localhost:5000',
+        target: 'http://localhost:6000',
         changeOrigin: true,
+      },
+      // Proxy uploads so frontend can request image URLs like `/uploads/...`
+      '/uploads': {
+        target: 'http://localhost:6000',
+        changeOrigin: true,
+        secure: false,
       },
     },
   },

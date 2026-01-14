@@ -36,7 +36,7 @@ function ProductDetail() {
     : product.pricing.retailPrice;
 
   const imageUrl = product.images?.[selectedImage]?.url 
-    ? `http://localhost:5000${product.images[selectedImage].url}` 
+    ? product.images[selectedImage].url
     : 'https://via.placeholder.com/600x600?text=No+Image';
 
   return (
@@ -67,7 +67,7 @@ function ProductDetail() {
                   }`}
                 >
                   <img
-                    src={`http://localhost:5000${img.url}`}
+                    src={img.url}
                     alt={`${product.name} ${idx + 1}`}
                     className="w-full h-full object-cover"
                   />

@@ -32,7 +32,7 @@ function Cart() {
               <div key={item.product._id} className="card p-4">
                 <div className="flex gap-4">
                   <img
-                    src={`http://localhost:5000${item.product.images[0]?.url}`}
+                    src={item.product.images[0]?.url || 'https://via.placeholder.com/150x150?text=No+Image'}
                     alt={item.product.name}
                     className="w-24 h-24 object-cover rounded"
                   />

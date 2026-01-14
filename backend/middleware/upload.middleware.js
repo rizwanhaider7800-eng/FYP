@@ -19,7 +19,7 @@ uploadDirs.forEach(dir => {
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
     let uploadPath = 'uploads/';
-    
+
     if (req.baseUrl.includes('products')) {
       uploadPath += 'products/';
     } else if (req.baseUrl.includes('users')) {
@@ -27,8 +27,10 @@ const storage = multer.diskStorage({
     } else if (req.baseUrl.includes('reviews')) {
       uploadPath += 'reviews/';
     }
-    
-    cb(null, uploadPath);
+
+    // Use absolute path so multer writes to the same folder served by express
+    const fullUploadPath = path.join(__dirname, '..', uploadPath);
+    cb(null, fullUploadPath);
   },
   filename: function (req, file, cb) {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
@@ -38,22 +40,19 @@ const storage = multer.diskStorage({
 
 // File filter
 const fileFilter = (req, file, cb) => {
-  const allowedTypes = /jpeg|jpg|png|gif/;
-  const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-  const mimetype = allowedTypes.test(file.mimetype);
-
-  if (mimetype && extname) {
+  // Accept any file where the MIME type indicates an image.
+  // This allows WebP, SVG, TIFF, HEIC and other image types.
+  if (file && file.mimetype && file.mimetype.startsWith('image/')) {
     return cb(null, true);
-  } else {
-    cb(new Error('Only image files are allowed (jpeg, jpg, png, gif)'));
   }
+  cb(new Error('Only image files are allowed'));
 };
 
 // Configure multer
 export const upload = multer({
   storage: storage,
   limits: {
-    fileSize: parseInt(process.env.MAX_FILE_SIZE) || 5 * 1024 * 1024 // 5MB default
+    fileSize: parseInt(process.env.MAX_FILE_SIZE) || 20 * 1024 * 1024 // 20MB default
   },
   fileFilter: fileFilter
 });
